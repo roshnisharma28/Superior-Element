@@ -130,6 +130,21 @@ class VoicebotApp {
         try {
             this.showLoading('Connecting to assistant...');
 
+            // Enable audio playback by creating audio context
+            try {
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    await this.audioContext.resume();
+                }
+                // Test play to enable autoplay
+                this.audioPlayer.muted = true;
+                await this.audioPlayer.play();
+                this.audioPlayer.pause();
+                this.audioPlayer.muted = false;
+                console.log('🔊 Audio context enabled for playback');
+            } catch (e) {
+                console.log('Audio context setup:', e.message);
+            }
+
             // Request microphone permission
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
@@ -193,20 +208,9 @@ class VoicebotApp {
                 }
             });
 
-            // Try different audio formats for better compatibility
-            let options = { mimeType: 'audio/wav' };
-            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                options = { mimeType: 'audio/webm' };
-                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                    options = { mimeType: 'audio/mp4' };
-                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                        options = {}; // Use default
-                    }
-                }
-            }
-
-            this.mediaRecorder = new MediaRecorder(stream, options);
-            console.log('🎵 Recording with format:', options.mimeType || 'default');
+            this.mediaRecorder = new MediaRecorder(stream, {
+                mimeType: 'audio/webm;codecs=opus'
+            });
 
             this.audioChunks = [];
             this.isRecording = true;
@@ -307,35 +311,17 @@ class VoicebotApp {
     }
 
     async processRecording() {
-        if (this.audioChunks.length === 0) {
-            console.warn('⚠️ No audio chunks to process');
-            this.transcription.textContent = 'No audio detected. Please try again.';
-            return;
-        }
+        if (this.audioChunks.length === 0) return;
 
         try {
-            console.log('🎵 Processing', this.audioChunks.length, 'audio chunks');
-
-            // Use the same MIME type that was used for recording
-            const mimeType = this.mediaRecorder.mimeType || 'audio/webm';
-            const audioBlob = new Blob(this.audioChunks, { type: mimeType });
-
-            console.log('📦 Audio blob size:', audioBlob.size, 'bytes, type:', mimeType);
-
-            if (audioBlob.size === 0) {
-                console.warn('⚠️ Empty audio blob');
-                this.transcription.textContent = 'No audio recorded. Please try again.';
-                return;
-            }
-
+            const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
             const arrayBuffer = await audioBlob.arrayBuffer();
-            console.log('📤 Sending audio buffer to server, size:', arrayBuffer.byteLength);
 
             // Send audio data to server
             this.socket.emit('audio-data', arrayBuffer);
 
         } catch (error) {
-            console.error('❌ Error processing recording:', error);
+            console.error('Error processing recording:', error);
             this.showError('Failed to process audio. Please try again.');
         }
 
@@ -348,7 +334,19 @@ class VoicebotApp {
             const audioUrl = URL.createObjectURL(blob);
 
             this.audioPlayer.src = audioUrl;
-            this.audioPlayer.play();
+
+            // Handle autoplay policy - try to play, if blocked, continue silently
+            try {
+                await this.audioPlayer.play();
+                console.log('🔊 Audio played successfully');
+            } catch (playError) {
+                if (playError.name === 'NotAllowedError') {
+                    console.log('🔇 Audio autoplay blocked by browser (normal behavior)');
+                    // Audio will play after user interaction
+                } else {
+                    console.error('Error playing audio:', playError);
+                }
+            }
 
             // Clean up URL after playing
             this.audioPlayer.onended = () => {
@@ -356,7 +354,7 @@ class VoicebotApp {
             };
 
         } catch (error) {
-            console.error('Error playing audio response:', error);
+            console.error('Error processing audio response:', error);
         }
     }
 

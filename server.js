@@ -115,62 +115,28 @@ io.on('connection', (socket) => {
   });
 });
 
-const fs = require('fs').promises;
-const path = require('path');
-
 // Function to transcribe audio using Deepgram
 async function transcribeAudio(audioBuffer) {
-  let tempFilePath = null;
-
   try {
     console.log('🎤 Processing audio buffer, size:', audioBuffer.length);
 
-    if (audioBuffer.length === 0) {
-      console.warn('⚠️ Empty audio buffer received');
-      return '';
-    }
-
-    // Create temporary file
-    const tempDir = './temp';
-    await fs.mkdir(tempDir, { recursive: true });
-    tempFilePath = path.join(tempDir, `audio_${Date.now()}.webm`);
-
-    // Write buffer to temporary file
-    await fs.writeFile(tempFilePath, Buffer.from(audioBuffer));
-    console.log('📁 Temporary audio file created:', tempFilePath);
-
-    const response = await deepgram.listen.prerecorded.transcribeFile(
-      { stream: await fs.readFile(tempFilePath), mimetype: 'audio/webm' },
+    const response = await deepgram.listen.prerecorded.transcribeBuffer(
+      audioBuffer,
       {
         model: 'nova-2',
         language: 'en-US',
         smart_format: true,
         diarize: false,
-        punctuate: true,
-        utterances: true
       }
     );
 
-    console.log('📝 Deepgram response received');
-
     const transcript = response.result?.results?.channels?.[0]?.alternatives?.[0]?.transcript;
-    console.log('✅ Extracted transcript:', transcript || '(no transcript)');
+    console.log('✅ Extracted transcript:', transcript);
 
     return transcript || '';
   } catch (error) {
     console.error('❌ Deepgram transcription error:', error);
-    console.error('Error details:', error.message);
     return '';
-  } finally {
-    // Clean up temporary file
-    if (tempFilePath) {
-      try {
-        await fs.unlink(tempFilePath);
-        console.log('🗑️ Temporary file cleaned up');
-      } catch (cleanupError) {
-        console.warn('⚠️ Failed to cleanup temporary file:', cleanupError.message);
-      }
-    }
   }
 }
 
