@@ -11,7 +11,7 @@ class VoicebotApp {
         this.audioContext = null;
         this.analyser = null;
         this.dataArray = null;
-        
+
         this.initializeElements();
         this.initializeSocket();
         this.setupEventListeners();
@@ -36,7 +36,7 @@ class VoicebotApp {
 
     initializeSocket() {
         this.socket = io();
-        
+
         this.socket.on('connect', () => {
             console.log('Connected to server');
             this.updateConnectionStatus(true);
@@ -116,7 +116,7 @@ class VoicebotApp {
     updateConnectionStatus(connected) {
         this.isConnected = connected;
         const statusText = document.querySelector('.status-text');
-        
+
         if (connected) {
             this.statusIndicator.className = 'status-indicator online';
             statusText.textContent = 'Connected - Ready to assist';
@@ -129,19 +129,19 @@ class VoicebotApp {
     async startCall() {
         try {
             this.showLoading('Connecting to assistant...');
-            
+
             // Request microphone permission
-            const stream = await navigator.mediaDevices.getUserMedia({ 
+            const stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
                     autoGainControl: true
-                } 
+                }
             });
 
             this.setupAudioAnalysis(stream);
             this.hideLoading();
-            
+
             // Update UI
             this.voiceCallBtn.classList.add('connected');
             this.callIcon.className = 'fas fa-microphone';
@@ -149,12 +149,12 @@ class VoicebotApp {
             this.audioControls.style.display = 'flex';
             this.conversationPanel.style.display = 'block';
             this.statusIndicator.className = 'status-indicator active';
-            
+
             // Show initial bot message
             this.addMessage('Hello! Welcome to Sparkle Clean. I\'m here to help you book a cleaning service. May I start by getting your name?', 'bot');
-            
+
             console.log('Call started successfully');
-            
+
         } catch (error) {
             console.error('Error starting call:', error);
             this.hideLoading();
@@ -167,7 +167,7 @@ class VoicebotApp {
         this.analyser = this.audioContext.createAnalyser();
         const source = this.audioContext.createMediaStreamSource(stream);
         source.connect(this.analyser);
-        
+
         this.analyser.fftSize = 256;
         this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
     }
@@ -184,18 +184,29 @@ class VoicebotApp {
         if (this.isRecording || this.isMuted) return;
 
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
+            const stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
                     autoGainControl: true,
                     sampleRate: 16000
-                } 
+                }
             });
 
-            this.mediaRecorder = new MediaRecorder(stream, {
-                mimeType: 'audio/webm;codecs=opus'
-            });
+            // Try different audio formats for better compatibility
+            let options = { mimeType: 'audio/wav' };
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options = { mimeType: 'audio/webm' };
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    options = { mimeType: 'audio/mp4' };
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                        options = {}; // Use default
+                    }
+                }
+            }
+
+            this.mediaRecorder = new MediaRecorder(stream, options);
+            console.log('🎵 Recording with format:', options.mimeType || 'default');
 
             this.audioChunks = [];
             this.isRecording = true;
@@ -211,7 +222,7 @@ class VoicebotApp {
             };
 
             this.mediaRecorder.start(100); // Collect data every 100ms
-            
+
             // Update UI
             this.voiceCallBtn.classList.add('calling');
             this.callIcon.className = 'fas fa-stop';
@@ -267,7 +278,7 @@ class VoicebotApp {
         if (!this.isRecording) return;
 
         this.isRecording = false;
-        
+
         if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
             this.mediaRecorder.stop();
         }
@@ -296,17 +307,35 @@ class VoicebotApp {
     }
 
     async processRecording() {
-        if (this.audioChunks.length === 0) return;
+        if (this.audioChunks.length === 0) {
+            console.warn('⚠️ No audio chunks to process');
+            this.transcription.textContent = 'No audio detected. Please try again.';
+            return;
+        }
 
         try {
-            const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+            console.log('🎵 Processing', this.audioChunks.length, 'audio chunks');
+
+            // Use the same MIME type that was used for recording
+            const mimeType = this.mediaRecorder.mimeType || 'audio/webm';
+            const audioBlob = new Blob(this.audioChunks, { type: mimeType });
+
+            console.log('📦 Audio blob size:', audioBlob.size, 'bytes, type:', mimeType);
+
+            if (audioBlob.size === 0) {
+                console.warn('⚠️ Empty audio blob');
+                this.transcription.textContent = 'No audio recorded. Please try again.';
+                return;
+            }
+
             const arrayBuffer = await audioBlob.arrayBuffer();
-            
+            console.log('📤 Sending audio buffer to server, size:', arrayBuffer.byteLength);
+
             // Send audio data to server
             this.socket.emit('audio-data', arrayBuffer);
-            
+
         } catch (error) {
-            console.error('Error processing recording:', error);
+            console.error('❌ Error processing recording:', error);
             this.showError('Failed to process audio. Please try again.');
         }
 
@@ -317,15 +346,15 @@ class VoicebotApp {
         try {
             const blob = new Blob([audioBuffer], { type: 'audio/mp3' });
             const audioUrl = URL.createObjectURL(blob);
-            
+
             this.audioPlayer.src = audioUrl;
             this.audioPlayer.play();
-            
+
             // Clean up URL after playing
             this.audioPlayer.onended = () => {
                 URL.revokeObjectURL(audioUrl);
             };
-            
+
         } catch (error) {
             console.error('Error playing audio response:', error);
         }
@@ -333,7 +362,7 @@ class VoicebotApp {
 
     toggleMute() {
         this.isMuted = !this.isMuted;
-        
+
         if (this.isMuted) {
             this.muteBtn.classList.add('muted');
             this.muteBtn.innerHTML = '<i class="fas fa-microphone-slash"></i>';
@@ -391,7 +420,7 @@ class VoicebotApp {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${type}`;
         messageDiv.textContent = text;
-        
+
         this.messages.appendChild(messageDiv);
         this.messages.scrollTop = this.messages.scrollHeight;
     }
