@@ -23,69 +23,81 @@ app.use(express.static('public'));
 // Initialize Deepgram
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 
-// Agent prompt for cleaning service booking
-const AGENT_PROMPT = `You are a friendly and professional customer service representative for "Sparkle Clean" - a premium cleaning service company. Your job is to help customers book cleaning services through a voice conversation.
+// Updated agent prompt for cleaning service booking with visit creation
+const AGENT_PROMPT = `You are the assistant for Sparkle Clean, a home cleaning service, tasked with booking appointments by following these steps in order: 
 
-Guidelines:
-- Be warm, professional, and helpful
-- Ask relevant questions to understand their cleaning needs
-- Collect essential information: name, phone number, address, preferred date/time, type of cleaning needed
-- Explain our services clearly: Regular cleaning, Deep cleaning, Move-in/out cleaning, Post-construction cleaning
-- Provide pricing estimates when asked
-- Confirm all details before finalizing the booking
-- Keep responses concise and conversational for voice interaction
-- If asked about anything outside cleaning services, politely redirect the conversation back to booking
+(1) Start with 'Hi, welcome to Sparkle Clean. Can I know your name please?' 
+(2) After receiving the name, say only 'Thanks, [name]!' then ask only 'What item would you like cleaned?' 
+(3) Ask only 'Would you prefer Standard or Deep Cleaning? Are any additional services needed?' 
+(4) Ask only 'What is your 10-digit phone number for booking?' 
+(5) Ask only 'What is the pincode and full address for cleaning?' 
+(6) Ask only 'When would you like the cleaning to occur? Provide a future date and time later than now in PST.' 
+(7) Say only 'Checking schedule for your requested date and time. If unavailable, I will suggest another time.' 
+(8) Say only 'Your booking is for [level] cleaning of [item] at [address] on [date] at [time]. Would you like to explore our cleaning subscription plans?' 
+(9) Say only 'Your [level] cleaning of [item] is confirmed for [date] at [time] at [address].' 
 
-Always end your responses in a way that encourages continued conversation until the booking is complete.
+Limit responses to 1-2 sentences, professional, without contractions. Validate each input: for invalid phone, say 'Please provide a valid 10-digit phone number'; for invalid date/time, say 'Date and time must be in the future. Provide a valid date and time.' 
 
-Current conversation context: Customer is calling to book a cleaning service.`;
+Do not summarize or add extra comments until all fields are collected. For pricing questions, say 'For pricing details, visit https://sparkle-clean.com.' For non-cleaning topics, say 'I can only assist with cleaning-related questions.' Do not use dummy values. 
+
+After collecting name, phone number, and date/time, call the create_visit function with these arguments immediately without further questions. Current date: ${new Date().toLocaleDateString()} (use PST for time validation).
+
+IMPORTANT: If you need to call a function, only call it once per conversation. Do not call the same function multiple times.`;
 
 // Conversation history storage
 const conversations = new Map();
 
+// Track which functions have been called in the current conversation
+const calledFunctions = new Map();
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
-  
+
   // Initialize conversation for this socket
   conversations.set(socket.id, [
-    { role: 'system', content: AGENT_PROMPT },
-    { role: 'assistant', content: 'Hello! Welcome to Sparkle Clean. I\'m here to help you book a cleaning service. May I start by getting your name?' }
+    { role: 'system', content: AGENT_PROMPT }
   ]);
 
+  // Initialize function tracking for this socket
+  calledFunctions.set(socket.id, {
+    create_visit: false
+  });
+
   // Send initial greeting
-  socket.emit('bot-message', 'Hello! Welcome to Sparkle Clean. I\'m here to help you book a cleaning service. May I start by getting your name?');
-  generateAndSendAudio(socket, 'Hello! Welcome to Sparkle Clean. I\'m here to help you book a cleaning service. May I start by getting your name?');
+  const initialMessage = 'Hi, welcome to Sparkle Clean. Can I know your name please?';
+  socket.emit('bot-message', initialMessage);
+  generateAndSendAudio(socket, initialMessage);
 
   // Handle audio data from client
   socket.on('audio-data', async (audioData) => {
     try {
       console.log('Received audio data from client');
-      
+
       // Convert audio to text using Deepgram
       const text = await transcribeAudio(audioData);
-      
+
       if (text && text.trim()) {
         console.log('Transcribed text:', text);
         socket.emit('transcription', text);
-        
+
         // Add user message to conversation
         const conversation = conversations.get(socket.id);
         conversation.push({ role: 'user', content: text });
-        
-        // Get response from LLM
-        const botResponse = await getLLMResponse(conversation);
-        
+
+        // Get response from LLM with function calling
+        const botResponse = await getLLMResponseWithFunctions(socket.id, conversation);
+
         if (botResponse) {
           console.log('Bot response:', botResponse);
-          
+
           // Add bot response to conversation
           conversation.push({ role: 'assistant', content: botResponse });
           conversations.set(socket.id, conversation);
-          
+
           // Send text response
           socket.emit('bot-message', botResponse);
-          
+
           // Generate and send audio response
           await generateAndSendAudio(socket, botResponse);
         }
@@ -99,6 +111,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
     conversations.delete(socket.id);
+    calledFunctions.delete(socket.id);
   });
 });
 
@@ -123,31 +136,150 @@ async function transcribeAudio(audioBuffer) {
   }
 }
 
-// Function to get LLM response from OpenRouter
-async function getLLMResponse(conversation) {
+// Function to get LLM response from OpenRouter with function calling support
+async function getLLMResponseWithFunctions(socketId, conversation) {
   try {
+    const socketFunctions = calledFunctions.get(socketId);
+
+    const requestBody = {
+      model: 'qwen/qwen-2.5-72b-instruct',
+      messages: conversation,
+      max_tokens: 300,
+      temperature: 0.7,
+    };
+
+    // Only include tools if they haven't been called yet
+    if (!socketFunctions.create_visit) {
+      requestBody.tools = [
+        {
+          type: "function",
+          function: {
+            name: "create_visit",
+            description: "Create a cleaning service visit entry with customer details.",
+            parameters: {
+              type: "object",
+              properties: {
+                name: {
+                  type: "string",
+                  description: "The full name of the customer."
+                },
+                phoneNumber: {
+                  type: "string",
+                  description: "The phone number of the customer (10 digits)."
+                },
+                dateTime: {
+                  type: "string",
+                  description: "The date and time of the cleaning visit in clear format (e.g., 'June 15, 2025 10:00 AM')."
+                },
+                serviceType: {
+                  type: "string",
+                  description: "Type of cleaning service (e.g., 'Standard Home Cleaning', 'Deep Cleaning')."
+                },
+                address: {
+                  type: "string",
+                  description: "Full address including pincode where cleaning will occur."
+                }
+              },
+              required: ["name", "phoneNumber", "dateTime"]
+            }
+          }
+        }
+      ];
+      requestBody.tool_choice = "auto";
+    }
+
     const response = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
-      {
-        model: 'qwen/qwen-2.5-72b-instruct',
-        messages: conversation,
-        max_tokens: 300,
-        temperature: 0.7,
-      },
+      requestBody,
       {
         headers: {
           'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'http://localhost:3000',
-          'X-Title': 'Cleaning Service Voicebot'
+          'X-Title': 'Sparkle Clean Voicebot'
         }
       }
     );
 
-    return response.data.choices[0].message.content;
+    const message = response.data.choices[0].message;
+
+    // Check for tool calls
+    if (message.tool_calls && message.tool_calls.length > 0) {
+      for (const toolCall of message.tool_calls) {
+        if (toolCall.function && toolCall.function.name === "create_visit" && !socketFunctions.create_visit) {
+          console.log("Tool call detected for create_visit");
+          socketFunctions.create_visit = true;
+          calledFunctions.set(socketId, socketFunctions);
+
+          try {
+            // Parse the function arguments
+            const functionArgs = JSON.parse(toolCall.function.arguments);
+            console.log("Creating visit with args:", functionArgs);
+
+            // Call the visit creation function
+            await createCleaningBooking(functionArgs);
+
+            // Add the tool call to conversation history
+            const conversation = conversations.get(socketId);
+            conversation.push({
+              role: "assistant",
+              content: "",
+              tool_calls: message.tool_calls
+            });
+
+            // Add the function response to conversation history
+            conversation.push({
+              role: "function",
+              name: "create_visit",
+              content: JSON.stringify({
+                status: "success",
+                message: "Visit created successfully"
+              })
+            });
+
+            conversations.set(socketId, conversation);
+
+            // Return confirmation message
+            return "Perfect! I've successfully scheduled your cleaning visit. Your booking has been confirmed and you'll receive a confirmation shortly. Is there anything else I can help you with today?";
+
+          } catch (error) {
+            console.error("Error calling create_visit:", error);
+            return "I've noted all your details for the cleaning visit. Our team will contact you shortly to confirm the booking. Is there anything else I can help you with?";
+          }
+        }
+      }
+    }
+
+    return message.content;
   } catch (error) {
     console.error('OpenRouter API error:', error.response?.data || error.message);
     return 'I apologize, but I\'m having technical difficulties. Could you please try again?';
+  }
+}
+
+// Function to create cleaning booking in database
+async function createCleaningBooking(bookingData) {
+  console.log("\n--- Function Call: create_cleaning_booking ---", bookingData);
+
+  try {
+    if (!process.env.DB_URL) {
+      console.warn("DB_URL not configured, skipping database save");
+      return;
+    }
+
+    const response = await axios.post(process.env.DB_URL, bookingData, {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000 // 10 second timeout
+    });
+
+    console.log("create_cleaning_booking API call successful:", response.status);
+    return response.data;
+  } catch (error) {
+    console.error('Error calling create_cleaning_booking API:',
+      error.response ? error.response.data : error.message);
+    throw error; // Re-throw to handle in calling function
   }
 }
 
@@ -166,11 +298,11 @@ async function generateAndSendAudio(socket, text) {
     const stream = await response.getStream();
     if (stream) {
       const chunks = [];
-      
+
       stream.on('data', (chunk) => {
         chunks.push(chunk);
       });
-      
+
       stream.on('end', () => {
         const audioBuffer = Buffer.concat(chunks);
         socket.emit('audio-response', audioBuffer);
@@ -183,11 +315,30 @@ async function generateAndSendAudio(socket, text) {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', message: 'Voicebot server is running' });
+  res.json({
+    status: 'ok',
+    message: 'Sparkle Clean Voicebot server is running',
+    dbConfigured: !!process.env.DB_URL
+  });
+});
+
+// API endpoint to manually create visit (for testing)
+app.post('/api/create-visit', async (req, res) => {
+  try {
+    const result = await createCleaningBooking(req.body);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Visit http://localhost:${PORT} to access the voicebot`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`DB configured: ${!!process.env.DB_URL}`);
 });

@@ -8,6 +8,9 @@ A sophisticated web-based voicebot application for booking cleaning services. Bu
 - **Speech-to-Text**: Powered by Deepgram's advanced STT technology
 - **Text-to-Speech**: Natural-sounding voice responses using Deepgram TTS
 - **Intelligent Conversation**: Uses Qwen 2.5 72B model via OpenRouter for smart responses
+- **Automated Visit Creation**: Automatically creates cleaning appointments in your database
+- **Function Calling**: AI agent calls database functions when booking is complete
+- **Database Integration**: Seamless integration with Dataverse or custom APIs
 - **Beautiful UI**: Modern, responsive design with smooth animations
 - **Voice Activity Detection**: Automatically stops recording after silence
 - **Conversation History**: Track the entire booking conversation
@@ -64,6 +67,7 @@ You'll need API keys from the following services:
    ```bash
    DEEPGRAM_API_KEY=your_deepgram_api_key_here
    OPENROUTER_API_KEY=your_openrouter_api_key_here
+   DB_URL=your_dataverse_api_url_here
    PORT=3000
    ```
 
@@ -100,6 +104,36 @@ You'll need API keys from the following services:
 - **Spacebar**: Hold to record, release to stop (when call is active)
 - **Mute Button**: Toggle microphone on/off
 - **End Call**: Terminate the voice session
+
+## 🗃️ Automated Visit Creation
+
+The voicebot automatically creates cleaning appointments in your database when customers complete the booking process:
+
+### How It Works
+
+1. **Data Collection**: The AI assistant collects customer information step-by-step
+2. **Function Calling**: When all required data is gathered, the AI calls the `create_visit` function
+3. **Database Integration**: Visit details are automatically saved to your configured database
+4. **Confirmation**: Customer receives immediate confirmation of their booking
+
+### Required Information
+
+The system collects and stores:
+- **Customer Name**: Full name for the booking
+- **Phone Number**: 10-digit contact number
+- **Service Type**: Type of cleaning (Standard/Deep, specific items)
+- **Address**: Complete address including pincode
+- **Date & Time**: Preferred cleaning appointment time
+- **Additional Services**: Any extra services requested
+
+### Database Configuration
+
+Set your database endpoint in the `.env` file:
+```bash
+DB_URL=https://your-api-endpoint.com/api/visits
+```
+
+The system will POST booking data in JSON format to this URL.
 
 ## 🏗️ Project Structure
 
@@ -154,6 +188,7 @@ Modify the OpenRouter request in `getLLMResponse` function:
 |----------|-------------|---------|
 | `DEEPGRAM_API_KEY` | Deepgram API key for STT/TTS | Required |
 | `OPENROUTER_API_KEY` | OpenRouter API key for LLM | Required |
+| `DB_URL` | Database/API URL for visit creation | Optional |
 | `PORT` | Server port | 3000 |
 
 ### Audio Settings
@@ -227,6 +262,54 @@ docker run -p 3000:3000 --env-file .env voicebot
 Enable debug logging by adding to your `.env`:
 ```
 DEBUG=true
+```
+
+## 🧪 Testing
+
+### ✅ Backend Testing
+- [ ] Server starts without errors
+- [ ] Health endpoint responds: `GET http://localhost:3000/health`
+- [ ] Socket.io connection established
+- [ ] API keys configured correctly
+- [ ] Visit creation function works
+
+### ✅ Frontend Testing
+- [ ] UI loads correctly
+- [ ] Voice call button appears
+- [ ] Microphone permission requested
+- [ ] Socket.io connects to backend
+- [ ] Voice recording works
+- [ ] Audio playback works
+
+### ✅ Integration Testing
+- [ ] Voice-to-text conversion
+- [ ] LLM response generation
+- [ ] Text-to-speech conversion
+- [ ] Full conversation flow
+- [ ] Visit creation functionality
+- [ ] Database integration (if configured)
+- [ ] Error handling works
+
+### ✅ API Testing
+Test the visit creation endpoint manually:
+```bash
+curl -X POST http://localhost:3000/api/create-visit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "John Doe",
+    "phoneNumber": "1234567890",
+    "dateTime": "June 15, 2025 10:00 AM",
+    "serviceType": "Standard Home Cleaning",
+    "address": "123 Main St, City, 12345"
+  }'
+```
+
+Expected response:
+```json
+{
+  "success": true,
+  "data": { ... }
+}
 ```
 
 ## 📄 License
