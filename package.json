@@ -1,0 +1,27 @@
+{
+  "name": "cleaning-service-voicebot",
+  "version": "1.0.0",
+  "description": "Web-based voicebot for booking cleaning services",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.5",
+    "dotenv": "^16.3.1",
+    "cors": "^2.8.5",
+    "axios": "^1.6.2",
+    "ws": "^8.14.2",
+    "@deepgram/sdk": "^3.4.0",
+    "multer": "^1.4.5-lts.1",
+    "form-data": "^4.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "keywords": ["voicebot", "cleaning-service", "deepgram", "openrouter"],
+  "author": "",
+  "license": "MIT"
+}

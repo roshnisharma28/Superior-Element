@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sparkle Clean - Voice Booking Assistant</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <i class="fas fa-sparkles"></i>
+                <h1>Sparkle Clean</h1>
+            </div>
+            <p class="tagline">Premium Cleaning Services at Your Fingertips</p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="hero-section">
+                <h2>Book Your Cleaning Service</h2>
+                <p>Speak with our AI assistant to schedule your cleaning appointment in minutes!</p>
+                
+                <!-- Voice Call Section -->
+                <div class="voice-section">
+                    <div class="call-status" id="callStatus">
+                        <span class="status-text">Ready to assist you</span>
+                        <div class="status-indicator offline" id="statusIndicator"></div>
+                    </div>
+                    
+                    <!-- Voice Call Button -->
+                    <button class="voice-call-btn" id="voiceCallBtn">
+                        <i class="fas fa-phone" id="callIcon"></i>
+                        <span class="btn-text" id="btnText">Start Voice Call</span>
+                    </button>
+                    
+                    <!-- Audio Controls -->
+                    <div class="audio-controls" id="audioControls" style="display: none;">
+                        <button class="control-btn mute-btn" id="muteBtn">
+                            <i class="fas fa-microphone"></i>
+                        </button>
+                        <button class="control-btn end-call-btn" id="endCallBtn">
+                            <i class="fas fa-phone-slash"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Conversation Display -->
+                <div class="conversation-panel" id="conversationPanel" style="display: none;">
+                    <div class="conversation-header">
+                        <h3>Conversation</h3>
+                        <div class="recording-indicator" id="recordingIndicator">
+                            <div class="pulse"></div>
+                            <span>Listening...</span>
+                        </div>
+                    </div>
+                    <div class="messages" id="messages"></div>
+                    <div class="transcription" id="transcription"></div>
+                </div>
+            </div>
+
+            <!-- Features Section -->
+            <div class="features-section">
+                <h3>Our Services</h3>
+                <div class="features-grid">
+                    <div class="feature">
+                        <i class="fas fa-home"></i>
+                        <h4>Regular Cleaning</h4>
+                        <p>Weekly or bi-weekly home maintenance cleaning</p>
+                    </div>
+                    <div class="feature">
+                        <i class="fas fa-broom"></i>
+                        <h4>Deep Cleaning</h4>
+                        <p>Comprehensive top-to-bottom cleaning service</p>
+                    </div>
+                    <div class="feature">
+                        <i class="fas fa-truck-moving"></i>
+                        <h4>Move-in/out Cleaning</h4>
+                        <p>Perfect for relocations and fresh starts</p>
+                    </div>
+                    <div class="feature">
+                        <i class="fas fa-hard-hat"></i>
+                        <h4>Post-Construction</h4>
+                        <p>Specialized cleaning after construction or renovation</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>&copy; 2024 Sparkle Clean. All rights reserved. | Powered by AI Voice Technology</p>
+        </footer>
+    </div>
+
+    <!-- Audio Elements -->
+    <audio id="audioPlayer" style="display: none;"></audio>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p>Connecting to assistant...</p>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
