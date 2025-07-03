@@ -1,0 +1,23 @@
+{
+  "recommendations": [
+    "ms-vscode.vscode-node-azure-pack",
+    "ms-vscode.vscode-typescript-next",
+    "bradlc.vscode-tailwindcss",
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "ritwickdey.liveserver",
+    "rangav.vscode-thunder-client",
+    "ms-vscode.vscode-json",
+    "formulahendry.auto-rename-tag",
+    "christian-kohler.path-intellisense",
+    "ms-vscode.vscode-toggle-quotes",
+    "usernamehw.errorlens",
+    "oderwat.indent-rainbow",
+    "ms-vscode.hexeditor",
+    "ms-vscode.vscode-web-accessibility",
+    "ms-vscode.vscode-web-dev-extension-pack"
+  ],
+  "unwantedRecommendations": [
+    "ms-vscode.vscode-typescript-tslint-plugin"
+  ]
+}
