@@ -39,6 +39,10 @@ class VoicebotApp {
     this.recordingIndicator = document.getElementById("recordingIndicator");
     this.loadingOverlay = document.getElementById("loadingOverlay");
     this.audioPlayer = document.getElementById("audioPlayer");
+    
+    // Configure audio player for better reliability
+    this.audioPlayer.preload = "auto";
+    this.audioPlayer.volume = 1.0;
   }
 
   initializeSocket() {
@@ -59,10 +63,7 @@ class VoicebotApp {
       this.addMessage(message, "bot");
     });
 
-    // Handle streaming text chunks (NEW)
-    this.socket.on("bot-message-chunk", (chunk) => {
-      this.handleStreamingText(chunk);
-    });
+
 
     this.socket.on("transcription", (text) => {
       this.updateTranscription(text);
@@ -71,14 +72,15 @@ class VoicebotApp {
 
     // Handle streaming audio response (NEW)
     this.socket.on("audio-chunk", (audioBuffer) => {
+      console.log("🎵 Received audio chunk, size:", audioBuffer.byteLength || audioBuffer.length);
       this.streamingAudioChunks.push(audioBuffer);
-      if (!this.isPlayingAudio) {
-        this.playStreamingAudio();
-      }
     });
 
     this.socket.on("audio-stream-end", () => {
-      console.log("� Audio stream ended");
+      console.log("🔊 Audio stream ended, starting playback");
+      if (!this.isPlayingAudio && this.streamingAudioChunks.length > 0) {
+        this.playStreamingAudio();
+      }
     });
 
     this.socket.on("tts-error", (error) => {
@@ -328,11 +330,7 @@ class VoicebotApp {
     this.audioChunks = [];
   }
 
-  // Handle streaming text from LLM (NEW)
-  handleStreamingText(chunk) {
-    // Simply append streaming text to the conversation
-    this.addMessage(chunk, "bot");
-  }
+
 
   resumeListening() {
     if (this.inCall && !this.isMuted && !this.botSpeaking) {
@@ -343,14 +341,20 @@ class VoicebotApp {
   }
 
   async playStreamingAudio() {
-    if (this.isPlayingAudio || this.streamingAudioChunks.length === 0) return;
+    if (this.isPlayingAudio || this.streamingAudioChunks.length === 0) {
+      console.log("⏸️ Cannot play audio - already playing:", this.isPlayingAudio, "chunks:", this.streamingAudioChunks.length);
+      return;
+    }
     
+    console.log("🎵 Playing streaming audio with", this.streamingAudioChunks.length, "chunks");
     this.isPlayingAudio = true;
     this.botSpeaking = true;
 
     try {
       // Combine all audio chunks
       const totalLength = this.streamingAudioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      console.log("📊 Total audio length:", totalLength, "bytes");
+      
       const combinedAudio = new Uint8Array(totalLength);
       let offset = 0;
       
@@ -363,23 +367,47 @@ class VoicebotApp {
       const audioBlob = new Blob([combinedAudio], { type: "audio/wav" });
       const audioUrl = URL.createObjectURL(audioBlob);
       
+      console.log("🔊 Setting audio source and playing...");
       this.audioPlayer.src = audioUrl;
-      await this.audioPlayer.play();
-
+      
+      // Add error handler for audio playback
+      this.audioPlayer.onerror = (e) => {
+        console.error("❌ Audio playback error:", e);
+        URL.revokeObjectURL(audioUrl);
+        this.isPlayingAudio = false;
+        this.botSpeaking = false;
+        this.streamingAudioChunks = [];
+        setTimeout(() => {
+          this.resumeListening();
+        }, 500);
+      };
+      
       this.audioPlayer.onended = () => {
+        console.log("✅ Audio playback finished");
         URL.revokeObjectURL(audioUrl);
         this.isPlayingAudio = false;
         this.botSpeaking = false;
         this.streamingAudioChunks = []; // Clear chunks
         
-        console.log("🔊 Audio playback finished");
+        // Resume listening after bot finishes speaking
+        setTimeout(() => {
+          this.resumeListening();
+        }, 500);
       };
+      
+      await this.audioPlayer.play();
+      console.log("🎵 Audio started playing successfully");
 
     } catch (error) {
       console.error("Error playing streaming audio:", error);
       this.isPlayingAudio = false;
       this.botSpeaking = false;
       this.streamingAudioChunks = [];
+      
+      // Resume listening even if audio playback failed
+      setTimeout(() => {
+        this.resumeListening();
+      }, 500);
     }
   }
 
