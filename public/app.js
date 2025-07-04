@@ -77,6 +77,11 @@ class VoicebotApp {
       this.addMessage(text, "user");
     });
 
+    // Handle interim transcription (real-time preview)
+    this.socket.on("interim-transcription", (text) => {
+      this.updateInterimTranscription(text);
+    });
+
     // Handle streaming audio chunks
     this.socket.on("audio-chunk", (audioBuffer) => {
       this.handleAudioChunk(audioBuffer);
@@ -428,6 +433,11 @@ class VoicebotApp {
 
   updateTranscription(text) {
     this.transcription.textContent = `You said: "${text}"`;
+  }
+
+  updateInterimTranscription(text) {
+    // Show interim results with different styling
+    this.transcription.innerHTML = `<span style="opacity: 0.7; font-style: italic;">Listening: "${text}"</span>`;
   }
 
   showLoading(message = "Loading...") {

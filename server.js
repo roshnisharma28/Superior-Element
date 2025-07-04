@@ -113,7 +113,7 @@ async function setupLiveSTT(socket) {
       model: "nova-2",
       language: "en-US",
       smart_format: true,
-      interim_results: false,
+      interim_results: true, // ✅ FIXED: Changed to true for utterance_end_ms
       utterance_end_ms: 1500,
       vad_events: true,
       encoding: "linear16",
@@ -134,18 +134,24 @@ async function setupLiveSTT(socket) {
       deepgramLive.addListener("Results", async (data) => {
         const transcript = data.channel?.alternatives?.[0]?.transcript;
         
-        if (transcript && transcript.trim() && data.is_final) {
-          console.log("📝 Final transcript:", transcript);
-          
-          const connection = activeConnections.get(socket.id);
-          if (connection && !connection.isProcessing) {
-            connection.isProcessing = true;
+        if (transcript && transcript.trim()) {
+          if (data.is_final) {
+            console.log("📝 Final transcript:", transcript);
             
-            // Emit transcription immediately
-            socket.emit("transcription", transcript);
-            
-            // Process with streaming LLM (non-blocking)
-            processWithStreamingLLM(socket, transcript);
+            const connection = activeConnections.get(socket.id);
+            if (connection && !connection.isProcessing) {
+              connection.isProcessing = true;
+              
+              // Emit transcription immediately
+              socket.emit("transcription", transcript);
+              
+              // Process with streaming LLM (non-blocking)
+              processWithStreamingLLM(socket, transcript);
+            }
+          } else {
+            // Handle interim results for real-time feedback
+            console.log("📝 Interim:", transcript);
+            socket.emit("interim-transcription", transcript);
           }
         }
       });
@@ -156,8 +162,14 @@ async function setupLiveSTT(socket) {
       });
 
       deepgramLive.addListener("error", (error) => {
-        console.error("Deepgram error:", error);
-        socket.emit("stt-error", error.message);
+        console.error("❌ Deepgram Live error:", error);
+        socket.emit("stt-error", error.message || "Speech recognition error");
+        
+        // Clean up connection
+        const connection = activeConnections.get(socket.id);
+        if (connection) {
+          connection.isProcessing = false;
+        }
       });
 
       deepgramLive.addListener("close", () => {
