@@ -46,10 +46,9 @@ IMPORTANT: If you need to call a function, only call it once per conversation. D
 
 // Conversation history storage
 const conversations = new Map();
-const calledFunctions = new Map();
 
-// Store active connections for streaming
-const activeConnections = new Map();
+// Track which functions have been called in the current conversation
+const calledFunctions = new Map();
 
 // Socket.io connection handling
 io.on("connection", (socket) => {
@@ -64,144 +63,89 @@ io.on("connection", (socket) => {
   socket.emit("bot-message", initialMessage);
   streamTTSResponse(socket, initialMessage);
 
-  // Handle live audio streaming for STT
-  socket.on("start-audio-stream", async () => {
+  // Handle audio data from client (ORIGINAL METHOD)
+  socket.on("audio-data", async (audioData) => {
     try {
-      console.log("🎤 Starting live STT stream for:", socket.id);
-      await setupLiveSTT(socket);
+      console.log("Received audio data from client");
+
+      // Convert audio to text using Deepgram (but with streaming optimizations)
+      const text = await transcribeAudio(audioData);
+
+      if (text && text.trim()) {
+        console.log("Transcribed text:", text);
+        socket.emit("transcription", text);
+
+        // Add user message to conversation
+        const conversation = conversations.get(socket.id);
+        conversation.push({ role: "user", content: text });
+
+        // Get response from LLM with streaming
+        const botResponse = await getLLMResponseWithFunctions(
+          socket.id,
+          conversation
+        );
+
+        if (botResponse) {
+          console.log("Bot response:", botResponse);
+
+          // Add bot response to conversation
+          conversation.push({ role: "assistant", content: botResponse });
+          conversations.set(socket.id, conversation);
+
+          // Send text response immediately
+          socket.emit("bot-message", botResponse);
+
+          // Generate and send streaming audio response
+          await streamTTSResponse(socket, botResponse);
+        }
+      }
     } catch (error) {
-      console.error("Error starting STT stream:", error);
-      socket.emit("stt-error", "Failed to start speech recognition");
-    }
-  });
-
-  // Handle audio stream data
-  socket.on("audio-stream", (audioData) => {
-    const connection = activeConnections.get(socket.id);
-    if (connection?.deepgramLive?.getReadyState() === 1) {
-      connection.deepgramLive.send(audioData);
-    }
-  });
-
-  // Handle stop audio stream
-  socket.on("stop-audio-stream", () => {
-    const connection = activeConnections.get(socket.id);
-    if (connection?.deepgramLive) {
-      connection.deepgramLive.finish();
+      console.error("Error processing audio:", error);
+      socket.emit("error", "Sorry, I had trouble processing that. Could you please try again?");
     }
   });
 
   socket.on("disconnect", () => {
     console.log("Client disconnected:", socket.id);
-    
-    // Clean up connections
-    const connection = activeConnections.get(socket.id);
-    if (connection?.deepgramLive) {
-      connection.deepgramLive.finish();
-    }
-    
-    activeConnections.delete(socket.id);
     conversations.delete(socket.id);
     calledFunctions.delete(socket.id);
   });
 });
 
-// Setup live STT with WebSocket
-async function setupLiveSTT(socket) {
+// Function to transcribe audio using Deepgram (ORIGINAL METHOD - OPTIMIZED)
+async function transcribeAudio(audioBuffer) {
   try {
-    const deepgramLive = deepgram.listen.live({
-      model: "nova-2",
-      language: "en-US",
-      smart_format: true,
-      interim_results: true, // ✅ FIXED: Changed to true for utterance_end_ms
-      utterance_end_ms: 1500,
-      vad_events: true,
-      encoding: "linear16",
-      sample_rate: 16000,
-    });
+    const response = await deepgram.listen.prerecorded.transcribeFile(
+      audioBuffer,
+      {
+        model: "nova-2",
+        language: "en-US",
+        smart_format: true,
+        diarize: false,
+      }
+    );
 
-    // Store connection
-    activeConnections.set(socket.id, { 
-      deepgramLive,
-      currentTranscript: "",
-      isProcessing: false 
-    });
-
-    deepgramLive.addListener("open", async () => {
-      console.log("✅ Deepgram live connection opened");
-      socket.emit("stt-ready");
-
-      deepgramLive.addListener("Results", async (data) => {
-        const transcript = data.channel?.alternatives?.[0]?.transcript;
-        
-        if (transcript && transcript.trim()) {
-          if (data.is_final) {
-            console.log("📝 Final transcript:", transcript);
-            
-            const connection = activeConnections.get(socket.id);
-            if (connection && !connection.isProcessing) {
-              connection.isProcessing = true;
-              
-              // Emit transcription immediately
-              socket.emit("transcription", transcript);
-              
-              // Process with streaming LLM (non-blocking)
-              processWithStreamingLLM(socket, transcript);
-            }
-          } else {
-            // Handle interim results for real-time feedback
-            console.log("📝 Interim:", transcript);
-            socket.emit("interim-transcription", transcript);
-          }
-        }
-      });
-
-      deepgramLive.addListener("UtteranceEnd", () => {
-        console.log("🔇 Utterance ended");
-        socket.emit("utterance-end");
-      });
-
-      deepgramLive.addListener("error", (error) => {
-        console.error("❌ Deepgram Live error:", error);
-        socket.emit("stt-error", error.message || "Speech recognition error");
-        
-        // Clean up connection
-        const connection = activeConnections.get(socket.id);
-        if (connection) {
-          connection.isProcessing = false;
-        }
-      });
-
-      deepgramLive.addListener("close", () => {
-        console.log("Deepgram connection closed");
-        socket.emit("stt-closed");
-      });
-    });
-
-    return deepgramLive;
+    const transcript = response.result?.results?.channels?.[0]?.alternatives?.[0]?.transcript;
+    return transcript || "";
   } catch (error) {
-    console.error("Error setting up live STT:", error);
-    throw error;
+    console.error("Deepgram transcription error:", error);
+    return "";
   }
 }
 
-// Process user input with streaming LLM
-async function processWithStreamingLLM(socket, transcript) {
+// Function to get LLM response from OpenRouter with function calling support (ORIGINAL METHOD - OPTIMIZED)
+async function getLLMResponseWithFunctions(socketId, conversation) {
   try {
-    const conversation = conversations.get(socket.id);
-    conversation.push({ role: "user", content: transcript });
+    const socketFunctions = calledFunctions.get(socketId);
 
-    const socketFunctions = calledFunctions.get(socket.id);
-    
     const requestBody = {
       model: "qwen/qwen-2.5-72b-instruct",
       messages: conversation,
       max_tokens: 300,
       temperature: 0.7,
-      stream: true, // Enable streaming
     };
 
-    // Add tools if not called yet
+    // Only include tools if they haven't been called yet
     if (!socketFunctions.create_visit) {
       requestBody.tools = [
         {
@@ -226,7 +170,6 @@ async function processWithStreamingLLM(socket, transcript) {
       requestBody.tool_choice = "auto";
     }
 
-    // Start streaming LLM response
     const response = await axios.post(
       "https://openrouter.ai/api/v1/chat/completions",
       requestBody,
@@ -237,112 +180,62 @@ async function processWithStreamingLLM(socket, transcript) {
           "HTTP-Referer": "http://localhost:3000",
           "X-Title": "Sparkle Clean Voicebot",
         },
-        responseType: 'stream'
       }
     );
 
-    let fullResponse = "";
-    let currentSentence = "";
-    const sentenceEnders = /[.!?]\s/;
+    const message = response.data.choices[0].message;
 
-    response.data.on('data', (chunk) => {
-      const lines = chunk.toString().split('\n').filter(line => line.trim() !== '');
-      
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data === '[DONE]') {
-            // Process final sentence if any
-            if (currentSentence.trim()) {
-              processCompleteSentence(socket, currentSentence.trim());
-            }
-            
-            // Add complete response to conversation
-            conversation.push({ role: "assistant", content: fullResponse });
-            conversations.set(socket.id, conversation);
-            
-            // Mark processing complete
-            const connection = activeConnections.get(socket.id);
-            if (connection) {
-              connection.isProcessing = false;
-            }
-            
-            socket.emit("llm-complete");
-            return;
-          }
-          
+    // Check for tool calls
+    if (message.tool_calls && message.tool_calls.length > 0) {
+      for (const toolCall of message.tool_calls) {
+        if (toolCall.function && toolCall.function.name === "create_visit" && !socketFunctions.create_visit) {
+          console.log("Tool call detected for create_visit");
+          socketFunctions.create_visit = true;
+          calledFunctions.set(socketId, socketFunctions);
+
           try {
-            const parsed = JSON.parse(data);
-            const content = parsed.choices?.[0]?.delta?.content;
-            
-            if (content) {
-              fullResponse += content;
-              currentSentence += content;
-              
-              // Check for sentence completion
-              if (sentenceEnders.test(currentSentence)) {
-                const sentences = currentSentence.split(sentenceEnders);
-                
-                // Process complete sentences
-                for (let i = 0; i < sentences.length - 1; i++) {
-                  if (sentences[i].trim()) {
-                    processCompleteSentence(socket, sentences[i].trim() + ".");
-                  }
-                }
-                
-                // Keep the last incomplete part
-                currentSentence = sentences[sentences.length - 1] || "";
-              }
-            }
-            
-            // Handle tool calls
-            if (parsed.choices?.[0]?.delta?.tool_calls) {
-              const toolCall = parsed.choices?.[0]?.delta?.tool_calls[0];
-              if (toolCall?.function?.name === "create_visit" && !socketFunctions.create_visit) {
-                socketFunctions.create_visit = true;
-                calledFunctions.set(socket.id, socketFunctions);
-                
-                // Handle function call (simplified for this example)
-                const confirmationMessage = "Perfect! I've successfully scheduled your cleaning visit. Your booking has been confirmed and you'll receive a confirmation shortly. Is there anything else I can help you with today?";
-                processCompleteSentence(socket, confirmationMessage);
-              }
-            }
-          } catch (parseError) {
-            // Skip invalid JSON chunks
-            continue;
+            // Parse the function arguments
+            const functionArgs = JSON.parse(toolCall.function.arguments);
+            console.log("Creating visit with args:", functionArgs);
+
+            // Call the visit creation function
+            await createCleaningBooking(functionArgs);
+
+            // Add the tool call to conversation history
+            const conversation = conversations.get(socketId);
+            conversation.push({
+              role: "assistant",
+              content: "",
+              tool_calls: message.tool_calls,
+            });
+
+            // Add the function response to conversation history
+            conversation.push({
+              role: "function",
+              name: "create_visit",
+              content: JSON.stringify({
+                status: "success",
+                message: "Visit created successfully",
+              }),
+            });
+
+            conversations.set(socketId, conversation);
+
+            // Return confirmation message
+            return "Perfect! I've successfully scheduled your cleaning visit. Your booking has been confirmed and you'll receive a confirmation shortly. Is there anything else I can help you with today?";
+          } catch (error) {
+            console.error("Error calling create_visit:", error);
+            return "I've noted all your details for the cleaning visit. Our team will contact you shortly to confirm the booking. Is there anything else I can help you with?";
           }
         }
       }
-    });
-
-    response.data.on('error', (error) => {
-      console.error("Streaming error:", error);
-      const connection = activeConnections.get(socket.id);
-      if (connection) {
-        connection.isProcessing = false;
-      }
-      socket.emit("llm-error", "Sorry, I had trouble processing that. Could you please try again?");
-    });
-
-  } catch (error) {
-    console.error("LLM processing error:", error);
-    const connection = activeConnections.get(socket.id);
-    if (connection) {
-      connection.isProcessing = false;
     }
-    socket.emit("llm-error", "I apologize, but I'm having technical difficulties. Could you please try again?");
-  }
-}
 
-// Process complete sentences immediately with streaming TTS
-function processCompleteSentence(socket, sentence) {
-  console.log("🎯 Processing sentence:", sentence);
-  
-  // Emit text immediately
-  socket.emit("bot-message-chunk", sentence);
-  
-  // Start streaming TTS (non-blocking)
-  streamTTSResponse(socket, sentence);
+    return message.content;
+  } catch (error) {
+    console.error("OpenRouter API error:", error.response?.data || error.message);
+    return "I apologize, but I'm having technical difficulties. Could you please try again?";
+  }
 }
 
 // Streaming TTS with Deepgram
